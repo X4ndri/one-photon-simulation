@@ -51,3 +51,4 @@ visualization:
     minval: 0.1
     maxval: *vizmax
     cmap: cv2.COLORMAP_TURBO
+    save: ['h5', 'mp4']

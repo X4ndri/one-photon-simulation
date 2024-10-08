@@ -1,13 +1,12 @@
 
-from sim_utils import read_config
 from pathlib import Path
-from sim_utils import *
+from utils import *
 import numpy as np
 import yaml
 import time
 import h5py
 
-def run_simulation(config_path, save=['mp4', 'h5']):
+def run_simulation(config_path):
 
     config = read_config(config_path)
     
@@ -50,6 +49,7 @@ def run_simulation(config_path, save=['mp4', 'h5']):
     cmap = get_colormap_from_string(config['visualization']['cmap'])
     minval = config['visualization']['minval']
     maxval = config['visualization']['maxval']
+    save = config['visualization']['save']
 
     # set seed
     if seed:
@@ -110,7 +110,6 @@ def run_simulation(config_path, save=['mp4', 'h5']):
                 mov = add_noise(mov, noise_type=v['type'], noise_level=v['level'], smoothness=v['smoothness'])
                 order+=1
     
-
     if normalize_to:    
         mov *= normalize_to/mov.max()
         mov = mov.astype(dtype)
@@ -147,5 +146,5 @@ def run_simulation(config_path, save=['mp4', 'h5']):
 
 if __name__ == '__main__':
     packdir = Path(__file__).parent
-    config_path = packdir.joinpath('sim.yaml')
+    config_path = packdir.joinpath('config.yaml')
     run_simulation(config_path)
