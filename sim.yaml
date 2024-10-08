@@ -1,0 +1,53 @@
+
+general:
+    parent_path: /home/aabdalq/projects/personal/gat/datasets/simulated/noiseless
+    number_nrns: 25
+    duration: 1
+    frame_size: [200, 320]
+    sampling_rate: 30
+    seed: 1964
+    normalize_to: &vizmax 1
+    dtype: np.float32
+
+spiking:
+    rate: 0.9
+    perturb: True
+    perturb_range: [-0.05, 0.05]
+
+fluo:
+    kernel_size: 50
+    tau_rise: 50 # in ms
+    tau_decay: 450 # in ms
+    scale: [0.7, 0.91] # uniform distribution to scale neuron fluo randomly
+
+spatial:
+    neighborhood: 15
+    x_shape_space: [2,3]
+    y_shape_space: [3]
+    min_distance: 40
+    overlap_threshold: 35
+    overlap_tolerance: 0.1
+    shape_scalar: 3.5
+
+noise:
+    added_noise:
+        # 0:
+        #     type: gaussian
+        #     level: 0.1
+        #     smoothness: 0
+        # 1:
+        #     type: gaussian
+        #     level: 0.0
+        #     smoothness: 7
+        # 2:
+        #     type: salt_and_pepper
+        #     level: 0.04
+        #     smoothness: 0
+
+    vignette: 
+
+visualization:
+    fps: 24
+    minval: 0.1
+    maxval: *vizmax
+    cmap: cv2.COLORMAP_TURBO
