@@ -2,6 +2,8 @@
 from pathlib import Path
 from utils import *
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import yaml
 import time
 import h5py
@@ -31,13 +33,19 @@ def run_simulation(config_path):
     tau_decay = config['fluo']['tau_decay']
     scale = config['fluo']['scale']
 
+    # # background
+    # bg_comps = config['background']['additive_components']
+    # comps_x_space =   config['background']['component_x_shape_space']
+    # comps_y_space =   config['background']['component_y_shape_space']
+
     # sptaial
     neighborhood = config['spatial']['neighborhood']
     x_shape_space = config['spatial']['x_shape_space']
     y_shape_space = config['spatial']['y_shape_space']
+    spread = config['spatial']['spread']
     min_distance = config['spatial']['min_distance']
-    overlap_threshold = config['spatial']['overlap_threshold']
-    overlap_tolerance = config['spatial']['overlap_tolerance']
+    nozone = config['spatial']['overlap_nozone']
+    qualifier = config['spatial']['overlap_qualifier']
     shape_scalar = config['spatial']['shape_scalar']
 
     # noise
@@ -76,6 +84,7 @@ def run_simulation(config_path):
                                          tau_decay=tau_decay,
                                          perturb=perturb,
                                          perturb_range=perturb_range,)
+
     
     # scale temporal activities
     fluo_scaled = scale_fluo(fluo_gt, *scale)
@@ -84,13 +93,35 @@ def run_simulation(config_path):
     centers = generate_neuron_centers(number_nrns=number_nrns,
                                       frame_size=frame_size,
                                       min_distance=min_distance,
-                                      overlap_threshold=overlap_threshold,
-                                      overlap_tolerance=overlap_tolerance)
+                                      spread=spread)
+
+
+    centers, overlap_pts = add_overlap(points=centers,
+                             num_overlaps=5,
+                             qualifier=qualifier,
+                             nozone=nozone,
+                             non_overlap_min_distance=10,
+                             frame_size=frame_size,
+                             marginx=20,
+                             marginy=20)
     
+    print(f"overlapping points are: {len(overlap_pts)}")
+    for i in overlap_pts:
+        print(f"{i[0]} and {i[1]}")
+    
+    xs, ys = zip(*centers)
+
+    plt.scatter(xs, ys)
+    plt.xlim([0, 320])
+    plt.ylim([0, 200])
+    plt.savefig(day_outputs_path.joinpath(f'{run_name}_centers.png'))
+
+
     shapes = generate_neuron_shapes(number_nrns=number_nrns,
                                     x_shape_space=x_shape_space,
                                     y_shape_space=y_shape_space)
-    
+
+
     # create movie
     mov = create_spatial(fluo=fluo_scaled,
                          neuron_shapes=shapes,
@@ -110,12 +141,12 @@ def run_simulation(config_path):
                 mov = add_noise(mov, noise_type=v['type'], noise_level=v['level'], smoothness=v['smoothness'])
                 order+=1
     
-    if normalize_to:    
-        mov *= normalize_to/mov.max()
-        mov = mov.astype(dtype)
+    # if normalize_to:    
+    #     mov *= normalize_to/mov.max()
+    #     mov = mov.astype(dtype)
 
-    if vignette:
-        mov = apply_vignette(mov, vignette)
+    # if vignette:
+    #     mov = apply_vignette(mov, vignette)
     
     if save is not None:
         if isinstance(save, str):
@@ -131,11 +162,23 @@ def run_simulation(config_path):
                 file.create_dataset('shapes', data=shapes)
                 file.create_dataset('config', data=yaml.dump(config))
         
-        if 'mp4' in save:
+            plt.close('all')
+            plt.imshow(mov.max(axis=0), origin='lower')
+            plt.savefig(day_outputs_path.joinpath(f'{run_name}_max_proj.png'))
+        if 'avi' in save:
+            color = (0, 255, 0)
+            radius = qualifier + 5
+            thickness = 1
+
             # convert to rgb before saving the mp4
             mov = movie_intensity_to_rgba(mov, colormap=cmap, minval=minval, maxval=maxval)[:,:,:,:3]
-            save_array_as_mp4(mov, day_outputs_path.joinpath(f'{run_name}.mp4'), fps=fps, iscolor=True)
-        
+            # mov_ovlp = mov.copy()
+            # for frame in mov_ovlp:
+            #     for ovlp in overlap_pts:
+            #         pt1, pt2 = ovlp
+            #         cv2.circle(frame, tuple(pt1), radius, color, thickness)
+            save_array_as_avi(mov, day_outputs_path.joinpath(f'{run_name}.avi'), fps=fps, iscolor=True)
+                    
         # dump config to the run folder
         with open(day_outputs_path.joinpath(f'{run_name}.yaml'), 'w') as file:
             yaml.dump(config, file)

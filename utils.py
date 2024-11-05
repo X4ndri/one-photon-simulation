@@ -1,11 +1,12 @@
 """ Utilities for generating synthetic 1-photon calcium imaging data.
 
-This module contains functions for generating synthetic 1-photon calcium imaging data, including ground truth temporal components, spatial components, and noisy videos.
+This module contains functions for generating synthetic 1-photon fluorescence imaging data, including ground truth temporal components, spatial components, and noisy videos.
 Author: Ahmad Abdal Qader
 Date: 2024-06-19
 """
 
 from scipy.ndimage import gaussian_filter
+from scipy.spatial.distance import pdist
 # from scipy.integrate import solve_ivp
 from scipy.spatial import distance
 import matplotlib.pyplot as plt
@@ -13,6 +14,7 @@ from itertools import product
 import matplotlib.cm as cm
 from tqdm.auto import tqdm
 import numpy as np
+import logging
 import cv2
 import yaml
 
@@ -22,6 +24,25 @@ def read_config(config_path):
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     return config
+
+def isvalid(point, frame_size, marginx, marginy):
+    validx = range(marginx, int(frame_size[1]-marginx))
+    validy = range(marginy, int(frame_size[0]-marginy))
+    if np.logical_and(point[0] in validx, point[1] in validy):
+        return True
+    else:
+        return False
+
+
+def gauss(amplitude, center, sigma, X, Y, ):
+    x0 = center[0]
+    y0 = center[0]
+    G = amplitude * np.exp(-((X - x0)**2 + (Y - y0)**2) / (2 * sigma**2))
+    return G
+
+def create_background():
+    
+    pass
 
 
 def exponential_decay_kernel(kernel_size, tau_rise_ms, tau_decay_ms, sampling_rate, amplitude=1):
@@ -48,6 +69,7 @@ def exponential_decay_kernel(kernel_size, tau_rise_ms, tau_decay_ms, sampling_ra
     t = np.arange(kernel_size)
     kernel = amplitude * (np.exp(-t / tau_decay) - np.exp(-t / tau_rise))
     return kernel
+
 
 def create_spiking_component(duration=20, rate=0.1, sampling_rate=30):
     ''' 
@@ -86,7 +108,7 @@ def initialize_neurons(number_nrn=50,
     
     '''
     Initializes neurons spiking trains for the simulation.
-sampling_rate
+
     ARGS:
         number_nrn (int): The number of neurons to simulate.
         duration (int): The duration of the simulation in seconds.
@@ -172,45 +194,105 @@ def generate_neuron_shapes(number_nrns, x_shape_space = [2,3], y_shape_space = [
     return neuron_shapes
 
 
-def generate_neuron_centers(number_nrns, frame_size=[400,400], min_distance=20, overlap_tolerance=0.1, overlap_threshold=7):
+def generate_neuron_centers(number_nrns,
+                            frame_size=[400,400],
+                            min_distance=20,
+                            spread=8):
     
     ''' Generates random centers for the neurons.
     Args:
         N (int): The number of neurons to generate.
         frame_size (tuple): The size of the frame.
         min_distance (int): The minimum distance in pxl sq between neurons.
-        overlap_tolerance (float): 0-1 how much overlap is allowed, if 0.1 then 10% of the neurons CAN overlap, but not guaranteed
-        overlap_threshold (int): if some overlap is allowed, what is the minimum distance, in pxl sq between overlapping neurons
+        spread (float): scalar that determines how spread the neurons 
+        are aroudn the center of the frame
+
     Returns:
         list: A list of tuples representing the centers of the neurons.
     '''
     
-    overlap_tolerance_counter = 0
     points = []
     
     while len(points) < number_nrns:
-        # Generate a random point
-        x = np.random.randint(0, frame_size[0])
-        y = np.random.randint(0, frame_size[1])
-        
-        point = (x, y)
-        
-        # Check if the point is far enough from all existing points
-        if all(distance.euclidean(point, existing_point) >= min_distance for existing_point in points):
-            points.append(point)
+        frame_center = [int(frame_size[0]/2), int(frame_size[1]/2)]
+        # by default, std is 15% of the spatial dimension
+        bd = 0.15 * np.array(frame_size) 
+        o = np.random.multivariate_normal(frame_center[::-1], spread * np.array([[bd[0]**2, 0],
+                                                                                 [0, bd[1]**2]]), )
+        point = [int(o[0]), int(o[1])]
+        if points == []:
+            if isvalid(point, frame_size, marginx=10, marginy=10):
+                points.append(point)
+            else:
+                print('point outside the frame limits', point)
         else:
-            dists_torelated = np.array([distance.euclidean(point, existing_point) for existing_point in points])
-            if all(dists_torelated >= overlap_threshold):
-                overlap_metric = np.sum(np.logical_and(dists_torelated>=overlap_threshold, dists_torelated<min_distance))
-                
-                if overlap_tolerance_counter < overlap_tolerance:
-                    print(f'allowed {overlap_metric} overlap')
-                    overlap_tolerance_counter += overlap_metric/number_nrns
+            if isvalid(point, frame_size, marginx=10, marginy=10):
+                if all(distance.euclidean(point, existing_point) >= min_distance for existing_point in points):
                     points.append(point)
-                
-    print(f"overlap coefficient: {overlap_tolerance_counter}\n")
-    
+                # TODO: maybe handle organized overlap here
+            else:
+                print('point outside the frame limits', point, len(points))
+
     return points
+
+
+def add_overlap(points:np.array, 
+                num_overlaps: int, 
+                qualifier:float, 
+                nozone:float, 
+                non_overlap_min_distance:float,
+                frame_size:list,
+                marginx:int,
+                marginy:int):
+    """if selected by the user, intentionally adds overlaps
+    between a select number of neurons.
+    
+    ARGS:
+        points
+        num_overlaps
+        qualifier
+        nozone
+
+    """
+    og_numpoints = len(points)
+    print(og_numpoints)
+    # select num_overlaps neurons and delete them
+    to_delete = np.random.choice(np.arange(len(points)), num_overlaps)
+    points = np.delete(points, to_delete, axis=0)
+    print(points.shape)
+    
+    # pick a point to add overlap to, then pick an angle, then 
+    # sample a magnitude between qualifier and nozone, then 
+    # step that much in that direction
+    num_added = 0
+    overlapping_points = []
+    while num_added<num_overlaps:
+        # print('trying a new point')
+        idx = np.random.randint(0, points.shape[0]-num_added)
+
+        p = points[idx]
+        
+        theta = np.random.rand(1)*2*np.pi
+        # magnitude = np.random.rand(1) * (1-(nozone/qualifier)) + (nozone/qualifier)
+        magnitude = np.random.rand(1) * (1-nozone/qualifier) + nozone/qualifier
+        magnitude *= qualifier
+        
+        x_step = int(np.ceil(magnitude * np.cos(theta)))
+        y_step = int(np.ceil(magnitude * np.sin(theta)))
+        new_point = p + [x_step, y_step]
+        if isvalid(new_point, frame_size, marginx, marginy):
+            if all(distance.euclidean(new_point, existing_point) \
+                >= non_overlap_min_distance for existing_point in np.delete(points, idx, 0)):
+                print(distance.euclidean(p, new_point))
+                points = np.vstack([points, new_point])
+                overlapping_points.append([p, new_point])
+                num_added += 1
+                # print('overlap successfull')
+            else:
+                logging.debug(f'while adding overlap {num_added+1}, overlap not permitted; trying a new point')
+                pass
+    print('total # of points', points.shape[0])
+    return points, overlapping_points
 
 
 def scale_fluo(fluo, min_s=0.2, max_s=1):
@@ -230,7 +312,12 @@ def scale_fluo(fluo, min_s=0.2, max_s=1):
     return fluo * s[:, np.newaxis]
 
 
-def create_spatial(fluo, neuron_shapes, neuron_centers, frame_size, neighborhood, shape_scalar=1):
+def create_spatial(fluo,
+                   neuron_shapes,
+                   neuron_centers,
+                   frame_size,
+                   neighborhood,
+                   shape_scalar=1):
 
     '''
     Creates a spatial representation of the neurons.
@@ -241,20 +328,21 @@ def create_spatial(fluo, neuron_shapes, neuron_centers, frame_size, neighborhood
         neuron_centers (list): The centers of the neurons.
         frame_size (tuple): The size of the frame.
         neighborhood (int): The size of the neighborhood around each neuron to consider for the simulation.
-        amp (int): The amplitude of the signal.
+        shape_scalar (float): controls the size of the neuron, higher = smaller neuron
+
 
     Returns:
         np.array: the movie with flashing neurons
     '''
     time = fluo.shape[1]
-    out = np.zeros([time, *frame_size])
-    
+    out = np.ones([time, *frame_size]) * 0.96
+
     x = np.arange(frame_size[0])
     y = np.arange(frame_size[1])
     x, y = np.meshgrid(x, y, indexing='ij')
     
     for (f, s, l) in tqdm(zip(fluo, neuron_shapes, neuron_centers)):
-        x0, y0 = l
+        y0, x0 = l
         sigma_x, sigma_y = s
         
         x_start, x_end = max(0, x0-neighborhood), min(frame_size[0], x0+neighborhood)
@@ -264,13 +352,13 @@ def create_spatial(fluo, neuron_shapes, neuron_centers, frame_size, neighborhood
         x_mask = (x >= x_start) & (x < x_end)
         y_mask = (y >= y_start) & (y < y_end)
         mask = x_mask & y_mask
-        
+            
         for t in range(time):
-            out[t] += np.clip(f[t] * np.exp( 
+            out[t] += f[t] * np.exp( 
                 -shape_scalar * (
                 ((x-x0)**2) / (2 * sigma_x**2) +
                 ((y-y0)**2) / (2 * sigma_y**2)
-                )) * mask, 0, 1)
+                )) #* mask
 
     return out
 
@@ -438,12 +526,12 @@ def get_colormap_from_string(colormap_str):
     return colormap_constant
 
 
-def save_array_as_mp4(array, filename, fps=30, iscolor=False):
+def save_array_as_avi(array, filename, fps=30, iscolor=False):
     """
     Saves a 3D NumPy array as an MP4 video file.
     
     ARGS:
-        array (numpy.ndarray): The input array of shape [time, height, width].
+        array (numpy.ndarray): The input array of shape [time, height, width, (channels, if rgb)].
         filename (str): The name of the output MP4 file.
         fps (int): Frames per second for the video.
     """
@@ -457,10 +545,16 @@ def save_array_as_mp4(array, filename, fps=30, iscolor=False):
         #     array = array[:, :, :, [1, 0, 2]]        
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # fourcc = cv2.VideoWriter_fourcc(*'FFV1')  # Use XVID codec
     out = cv2.VideoWriter(filename, fourcc, fps, (width, height), isColor=iscolor)
 
     for t in range(time):
-        frame = array[t][:,:,[2,1,0]]
+        if iscolor:
+            frame = array[t][:,:,[2,1,0]]
+        else:
+            frame = array[t]
+            frame = cv2.convertScaleAbs(frame) 
+
         out.write(frame)
     
     out.release()
